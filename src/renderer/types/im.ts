@@ -49,13 +49,6 @@ export interface FeishuGatewayStatus {
 
 // ==================== Telegram Types ====================
 
-export interface TelegramConfig {
-  enabled: boolean;
-  botToken: string;
-  allowedUserIds?: string[];
-  debug?: boolean;
-}
-
 export interface TelegramGatewayStatus {
   connected: boolean;
   startedAt: number | null;
@@ -155,12 +148,11 @@ export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
-  telegram: TelegramConfig;
+  telegram: TelegramOpenClawConfig;
   discord: DiscordConfig;
   nim: NimConfig;
   xiaomifeng: XiaomifengConfig;
   settings: IMSettings;
-  telegramOpenClaw?: TelegramOpenClawConfig;
 }
 
 export interface IMSettings {
@@ -284,13 +276,6 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
   debug: true,
 };
 
-export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
-  enabled: false,
-  botToken: '',
-  allowedUserIds: [],
-  debug: true,
-};
-
 export const DEFAULT_DISCORD_CONFIG: DiscordConfig = {
   enabled: false,
   botToken: '',
@@ -324,8 +309,8 @@ export const DEFAULT_TELEGRAM_OPENCLAW_CONFIG: TelegramOpenClawConfig = {
   historyLimit: 50,
   replyToMode: 'off',
   linkPreview: true,
-  streaming: 'off',
-  mediaMaxMb: 5,
+  streaming: 'partial',
+  mediaMaxMb: 100,
   proxy: '',
   webhookUrl: '',
   webhookSecret: '',
@@ -340,7 +325,7 @@ export const DEFAULT_IM_SETTINGS: IMSettings = {
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   dingtalk: DEFAULT_DINGTALK_CONFIG,
   feishu: DEFAULT_FEISHU_CONFIG,
-  telegram: DEFAULT_TELEGRAM_CONFIG,
+  telegram: DEFAULT_TELEGRAM_OPENCLAW_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
   nim: DEFAULT_NIM_CONFIG,
   xiaomifeng: DEFAULT_XIAOMIFENG_CONFIG,

@@ -666,7 +666,7 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       getCoworkConfig: () => getCoworkStore().getConfig(),
       getTelegramOpenClawConfig: () => {
         try {
-          return getIMGatewayManager()?.getConfig()?.telegramOpenClaw ?? null;
+          return getIMGatewayManager()?.getConfig()?.telegram ?? null;
         } catch {
           return null;
         }
@@ -879,6 +879,11 @@ const getIMGatewayManager = () => {
             reason: 'im-gateway-telegram-openclaw',
             restartGatewayIfRunning: true,
           });
+        },
+        ensureOpenClawGatewayConnected: async () => {
+          if (openClawRuntimeAdapter) {
+            await openClawRuntimeAdapter.connectGatewayIfNeeded();
+          }
         },
       }
     );
@@ -1658,6 +1663,20 @@ if (!gotTheLock) {
     try {
       const coworkStoreInstance = getCoworkStore();
       coworkStoreInstance.deleteSession(sessionId);
+      // Clean up IM session mapping so that new channel messages
+      // create a fresh session instead of referencing a deleted one.
+      try {
+        getIMGatewayManager()?.getIMStore()?.deleteSessionMappingByCoworkSessionId(sessionId);
+      } catch {
+        // IM store may not be initialised yet; safe to ignore.
+      }
+      // Notify runtime to purge in-memory caches for this session
+      // so that channel messages can create a fresh session.
+      try {
+        getCoworkEngineRouter().onSessionDeleted(sessionId);
+      } catch {
+        // Router may not be initialised yet; safe to ignore.
+      }
       return { success: true };
     } catch (error) {
       return {
@@ -2217,8 +2236,8 @@ if (!gotTheLock) {
     try {
       getIMGatewayManager().setConfig(config);
 
-      // Sync Telegram OpenClaw config to OpenClaw runtime if changed
-      if (config.telegramOpenClaw) {
+      // Sync Telegram config to OpenClaw runtime if changed
+      if (config.telegram) {
         const engineManager = getOpenClawEngineManager();
         if (engineManager.getStatus().phase === 'running') {
           await syncOpenClawConfig({

@@ -115,6 +115,9 @@ export class OpenClawConfigSync {
           ...(workspaceDir ? { workspace: workspaceDir } : {}),
         },
       },
+      session: {
+        dmScope: 'per-channel-peer',
+      },
     };
 
     // Sync Telegram OpenClaw channel config
@@ -124,9 +127,17 @@ export class OpenClawConfigSync {
         enabled: true,
         botToken: tgConfig.botToken,
         dmPolicy: tgConfig.dmPolicy || 'pairing',
-        allowFrom: tgConfig.allowFrom?.length ? tgConfig.allowFrom : [],
+        allowFrom: (() => {
+          const ids = tgConfig.allowFrom?.length ? [...tgConfig.allowFrom] : [];
+          if (tgConfig.dmPolicy === 'open' && !ids.includes('*')) ids.push('*');
+          return ids;
+        })(),
         groupPolicy: tgConfig.groupPolicy || 'allowlist',
-        groupAllowFrom: tgConfig.groupAllowFrom?.length ? tgConfig.groupAllowFrom : [],
+        groupAllowFrom: (() => {
+          const ids = tgConfig.groupAllowFrom?.length ? [...tgConfig.groupAllowFrom] : [];
+          if (tgConfig.groupPolicy === 'open' && !ids.includes('*')) ids.push('*');
+          return ids;
+        })(),
         groups: tgConfig.groups && Object.keys(tgConfig.groups).length > 0
           ? tgConfig.groups
           : { '*': { requireMention: true } },

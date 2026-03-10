@@ -8,10 +8,9 @@ import { useDispatch, useSelector } from 'react-redux';
 import { SignalIcon, XMarkIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { RootState } from '../../store';
 import { imService } from '../../services/im';
-import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setTelegramOpenClawConfig, setDiscordConfig, setNimConfig, setXiaomifengConfig, clearError } from '../../store/slices/imSlice';
+import { setDingTalkConfig, setFeishuConfig, setTelegramOpenClawConfig, setDiscordConfig, setNimConfig, setXiaomifengConfig, clearError } from '../../store/slices/imSlice';
 import { i18nService } from '../../services/i18n';
 import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig, TelegramOpenClawConfig } from '../../types/im';
-import { DEFAULT_TELEGRAM_OPENCLAW_CONFIG } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
 
 // Platform metadata
@@ -55,7 +54,6 @@ function translateIMError(error: string | null): string {
 const IMSettings: React.FC = () => {
   const dispatch = useDispatch();
   const { config, status, isLoading } = useSelector((state: RootState) => state.im);
-  const isOpenClawEngine = useSelector((state: RootState) => state.cowork?.config?.agentEngine === 'openclaw');
   const [activePlatform, setActivePlatform] = useState<IMPlatform>('dingtalk');
   const [testingPlatform, setTestingPlatform] = useState<IMPlatform | null>(null);
   const [connectivityResults, setConnectivityResults] = useState<Partial<Record<IMPlatform, IMConnectivityTestResult>>>({});
@@ -106,19 +104,17 @@ const IMSettings: React.FC = () => {
     dispatch(setFeishuConfig({ [field]: value }));
   };
 
-  // Handle Telegram config change
-  const handleTelegramChange = (field: 'botToken' | 'allowedUserIds', value: string | string[]) => {
-    dispatch(setTelegramConfig({ [field]: value }));
-  };
-
   // Handle Telegram OpenClaw config change
-  const tgOpenClawConfig = config.telegramOpenClaw || DEFAULT_TELEGRAM_OPENCLAW_CONFIG;
+  const tgOpenClawConfig = config.telegram;
   const handleTelegramOpenClawChange = (update: Partial<TelegramOpenClawConfig>) => {
     dispatch(setTelegramOpenClawConfig(update));
   };
-  const handleSaveTelegramOpenClawConfig = async () => {
+  const handleSaveTelegramOpenClawConfig = async (override?: Partial<TelegramOpenClawConfig>) => {
     if (!configLoaded) return;
-    await imService.updateConfig({ telegramOpenClaw: tgOpenClawConfig });
+    const configToSave = override
+      ? { ...tgOpenClawConfig, ...override }
+      : tgOpenClawConfig;
+    await imService.updateConfig({ telegram: configToSave });
   };
 
   // Handle Discord config change
@@ -141,9 +137,9 @@ const IMSettings: React.FC = () => {
   const handleSaveConfig = async () => {
     if (!configLoaded) return;
 
-    // For Telegram in OpenClaw mode, save telegramOpenClaw config instead
-    if (activePlatform === 'telegram' && isOpenClawEngine) {
-      await imService.updateConfig({ telegramOpenClaw: tgOpenClawConfig });
+    // For Telegram, save telegram config directly
+    if (activePlatform === 'telegram') {
+      await imService.updateConfig({ telegram: tgOpenClawConfig });
       return;
     }
 
@@ -216,6 +212,25 @@ const IMSettings: React.FC = () => {
     setTogglingPlatform(platform);
 
     try {
+      // Telegram has a separate config path
+      if (platform === 'telegram') {
+        const newEnabled = !tgOpenClawConfig.enabled;
+        dispatch(setTelegramOpenClawConfig({ enabled: newEnabled }));
+        await imService.updateConfig({ telegram: { ...tgOpenClawConfig, enabled: newEnabled } });
+
+        if (newEnabled) {
+          dispatch(clearError());
+          const success = await imService.startGateway(platform);
+          if (!success) {
+            dispatch(setTelegramOpenClawConfig({ enabled: false }));
+            await imService.updateConfig({ telegram: { ...tgOpenClawConfig, enabled: false } });
+          }
+        } else {
+          await imService.stopGateway(platform);
+        }
+        return;
+      }
+
       const isEnabled = config[platform].enabled;
       const newEnabled = !isEnabled;
 
@@ -274,10 +289,7 @@ const IMSettings: React.FC = () => {
       return !!(config.dingtalk.clientId && config.dingtalk.clientSecret);
     }
     if (platform === 'telegram') {
-      if (isOpenClawEngine) {
-        return !!tgOpenClawConfig.botToken;
-      }
-      return !!config.telegram.botToken;
+      return !!tgOpenClawConfig.botToken;
     }
     if (platform === 'discord') {
       return !!config.discord.botToken;
@@ -293,9 +305,6 @@ const IMSettings: React.FC = () => {
 
   // Get platform enabled state (persisted toggle state)
   const isPlatformEnabled = (platform: IMPlatform): boolean => {
-    if (platform === 'telegram' && isOpenClawEngine) {
-      return tgOpenClawConfig.enabled;
-    }
     return config[platform].enabled;
   };
 
@@ -321,11 +330,11 @@ const IMSettings: React.FC = () => {
 
     setConnectivityModalPlatform(platform);
 
-    // For Telegram in OpenClaw mode, persist telegramOpenClaw config and test
-    if (platform === 'telegram' && isOpenClawEngine) {
-      await imService.updateConfig({ telegramOpenClaw: tgOpenClawConfig });
+    // For Telegram, persist telegram config and test
+    if (platform === 'telegram') {
+      await imService.updateConfig({ telegram: tgOpenClawConfig });
       await runConnectivityTest(platform, {
-        telegramOpenClaw: tgOpenClawConfig,
+        telegram: tgOpenClawConfig,
       } as Partial<IMGatewayConfig>);
       return;
     }
@@ -375,13 +384,10 @@ const IMSettings: React.FC = () => {
 
   // Toggle gateway on/off - map platform to Redux action
   const getSetConfigAction = (platform: IMPlatform) => {
-    if (platform === 'telegram' && isOpenClawEngine) {
-      return setTelegramOpenClawConfig;
-    }
     const actionMap: Record<IMPlatform, any> = {
       dingtalk: setDingTalkConfig,
       feishu: setFeishuConfig,
-      telegram: setTelegramConfig,
+      telegram: setTelegramOpenClawConfig,
       discord: setDiscordConfig,
       nim: setNimConfig,
       xiaomifeng: setXiaomifengConfig,
@@ -599,122 +605,8 @@ const IMSettings: React.FC = () => {
         )}
 
         {/* Telegram Settings */}
-        {activePlatform === 'telegram' && !isOpenClawEngine && (
+        {activePlatform === 'telegram' && (
           <div className="space-y-3">
-            {/* Bot Token */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Bot Token
-              </label>
-              <input
-                type="password"
-                value={config.telegram.botToken}
-                onChange={(e) => handleTelegramChange('botToken', e.target.value)}
-                onBlur={handleSaveConfig}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-              />
-              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {i18nService.t('telegramTokenHint') || '从 @BotFather 获取 Bot Token'}
-              </p>
-            </div>
-
-            {/* Allowed User IDs */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Allowed User IDs
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={allowedUserIdInput}
-                  onChange={(e) => setAllowedUserIdInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const id = allowedUserIdInput.trim();
-                      if (id && !(config.telegram.allowedUserIds || []).includes(id)) {
-                        const newIds = [...(config.telegram.allowedUserIds || []), id];
-                        handleTelegramChange('allowedUserIds', newIds);
-                        setAllowedUserIdInput('');
-                        void imService.updateConfig({ telegram: { ...config.telegram, allowedUserIds: newIds } });
-                      }
-                    }
-                  }}
-                  className="block flex-1 rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                  placeholder={i18nService.t('telegramAllowedUserIdsPlaceholder') || '输入 Telegram User ID'}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const id = allowedUserIdInput.trim();
-                    if (id && !(config.telegram.allowedUserIds || []).includes(id)) {
-                      const newIds = [...(config.telegram.allowedUserIds || []), id];
-                      handleTelegramChange('allowedUserIds', newIds);
-                      setAllowedUserIdInput('');
-                      void imService.updateConfig({ telegram: { ...config.telegram, allowedUserIds: newIds } });
-                    }
-                  }}
-                  className="px-3 py-2 rounded-lg text-xs font-medium bg-claude-accent/10 text-claude-accent hover:bg-claude-accent/20 transition-colors"
-                >
-                  {i18nService.t('add') || '添加'}
-                </button>
-              </div>
-              {(config.telegram.allowedUserIds || []).length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {(config.telegram.allowedUserIds || []).map((id) => (
-                    <span
-                      key={id}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border dark:text-claude-darkText text-claude-text"
-                    >
-                      {id}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newIds = (config.telegram.allowedUserIds || []).filter((uid) => uid !== id);
-                          handleTelegramChange('allowedUserIds', newIds);
-                          void imService.updateConfig({ telegram: { ...config.telegram, allowedUserIds: newIds } });
-                        }}
-                        className="text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                      >
-                        <XMarkIcon className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {i18nService.t('telegramAllowedUserIdsHint') || '限制只有白名单中的用户可以与 Bot 交互。留空则允许所有用户。'}
-              </p>
-            </div>
-
-            <div className="pt-1">
-              {renderConnectivityTestButton('telegram')}
-            </div>
-
-            {/* Bot username display */}
-            {status.telegram.botUsername && (
-              <div className="text-xs text-green-600 dark:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg">
-                Bot: @{status.telegram.botUsername}
-              </div>
-            )}
-
-            {/* Error display */}
-            {status.telegram.lastError && (
-              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
-                {status.telegram.lastError}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Telegram OpenClaw Settings */}
-        {activePlatform === 'telegram' && isOpenClawEngine && (
-          <div className="space-y-3">
-            <div className="text-xs text-blue-600 dark:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg">
-              Telegram Bot 通过 OpenClaw 运行时运行
-            </div>
-
             {/* Bot Token */}
             <div className="space-y-1.5">
               <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -724,7 +616,7 @@ const IMSettings: React.FC = () => {
                 type="password"
                 value={tgOpenClawConfig.botToken}
                 onChange={(e) => handleTelegramOpenClawChange({ botToken: e.target.value })}
-                onBlur={handleSaveTelegramOpenClawConfig}
+                onBlur={() => handleSaveTelegramOpenClawConfig()}
                 className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
                 placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
               />
@@ -733,133 +625,135 @@ const IMSettings: React.FC = () => {
               </p>
             </div>
 
-            {/* DM Policy */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                DM Policy
-              </label>
-              <select
-                value={tgOpenClawConfig.dmPolicy}
-                onChange={(e) => {
-                  handleTelegramOpenClawChange({ dmPolicy: e.target.value as TelegramOpenClawConfig['dmPolicy'] });
-                  void handleSaveTelegramOpenClawConfig();
-                }}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-              >
-                <option value="pairing">Pairing（配对码验证）</option>
-                <option value="allowlist">Allowlist（白名单）</option>
-                <option value="open">Open（开放）</option>
-                <option value="disabled">Disabled（禁用 DM）</option>
-              </select>
-            </div>
-
-            {/* Allow From */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Allow From (User IDs)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={allowedUserIdInput}
-                  onChange={(e) => setAllowedUserIdInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const id = allowedUserIdInput.trim();
-                      if (id && !tgOpenClawConfig.allowFrom.includes(id)) {
-                        const newIds = [...tgOpenClawConfig.allowFrom, id];
-                        handleTelegramOpenClawChange({ allowFrom: newIds });
-                        setAllowedUserIdInput('');
-                        void imService.updateConfig({ telegramOpenClaw: { ...tgOpenClawConfig, allowFrom: newIds } });
-                      }
-                    }
-                  }}
-                  className="block flex-1 rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                  placeholder="输入 Telegram User ID（如 tg:123456789）"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const id = allowedUserIdInput.trim();
-                    if (id && !tgOpenClawConfig.allowFrom.includes(id)) {
-                      const newIds = [...tgOpenClawConfig.allowFrom, id];
-                      handleTelegramOpenClawChange({ allowFrom: newIds });
-                      setAllowedUserIdInput('');
-                      void imService.updateConfig({ telegramOpenClaw: { ...tgOpenClawConfig, allowFrom: newIds } });
-                    }
-                  }}
-                  className="px-3 py-2 rounded-lg text-xs font-medium bg-claude-accent/10 text-claude-accent hover:bg-claude-accent/20 transition-colors"
-                >
-                  {i18nService.t('add') || '添加'}
-                </button>
-              </div>
-              {tgOpenClawConfig.allowFrom.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {tgOpenClawConfig.allowFrom.map((id) => (
-                    <span
-                      key={id}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border dark:text-claude-darkText text-claude-text"
-                    >
-                      {id}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newIds = tgOpenClawConfig.allowFrom.filter((uid) => uid !== id);
-                          handleTelegramOpenClawChange({ allowFrom: newIds });
-                          void imService.updateConfig({ telegramOpenClaw: { ...tgOpenClawConfig, allowFrom: newIds } });
-                        }}
-                        className="text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                      >
-                        <XMarkIcon className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Streaming Mode */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Streaming
-              </label>
-              <select
-                value={tgOpenClawConfig.streaming}
-                onChange={(e) => {
-                  handleTelegramOpenClawChange({ streaming: e.target.value as TelegramOpenClawConfig['streaming'] });
-                  void handleSaveTelegramOpenClawConfig();
-                }}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-              >
-                <option value="off">Off</option>
-                <option value="partial">Partial</option>
-                <option value="block">Block</option>
-                <option value="progress">Progress</option>
-              </select>
-            </div>
-
-            {/* Proxy */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Proxy
-              </label>
-              <input
-                type="text"
-                value={tgOpenClawConfig.proxy}
-                onChange={(e) => handleTelegramOpenClawChange({ proxy: e.target.value })}
-                onBlur={handleSaveTelegramOpenClawConfig}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                placeholder="socks5://localhost:9050"
-              />
-            </div>
-
             {/* Advanced Settings (collapsible) */}
             <details className="group">
               <summary className="cursor-pointer text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent transition-colors">
                 高级设置
               </summary>
               <div className="mt-2 space-y-3 pl-2 border-l-2 border-claude-border/30 dark:border-claude-darkBorder/30">
+                {/* DM Policy */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    DM Policy
+                  </label>
+                  <select
+                    value={tgOpenClawConfig.dmPolicy}
+                    onChange={(e) => {
+                      const update = { dmPolicy: e.target.value as TelegramOpenClawConfig['dmPolicy'] };
+                      handleTelegramOpenClawChange(update);
+                      void handleSaveTelegramOpenClawConfig(update);
+                    }}
+                    className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
+                  >
+                    <option value="pairing">Pairing（配对码验证）</option>
+                    <option value="allowlist">Allowlist（白名单）</option>
+                    <option value="open">Open（开放）</option>
+                    <option value="disabled">Disabled（禁用 DM）</option>
+                  </select>
+                </div>
+
+                {/* Allow From */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    Allow From (User IDs)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={allowedUserIdInput}
+                      onChange={(e) => setAllowedUserIdInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const id = allowedUserIdInput.trim();
+                          if (id && !tgOpenClawConfig.allowFrom.includes(id)) {
+                            const newIds = [...tgOpenClawConfig.allowFrom, id];
+                            handleTelegramOpenClawChange({ allowFrom: newIds });
+                            setAllowedUserIdInput('');
+                            void imService.updateConfig({ telegram: { ...tgOpenClawConfig, allowFrom: newIds } });
+                          }
+                        }
+                      }}
+                      className="block flex-1 rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
+                      placeholder="输入 Telegram User ID（如 tg:123456789）"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = allowedUserIdInput.trim();
+                        if (id && !tgOpenClawConfig.allowFrom.includes(id)) {
+                          const newIds = [...tgOpenClawConfig.allowFrom, id];
+                          handleTelegramOpenClawChange({ allowFrom: newIds });
+                          setAllowedUserIdInput('');
+                          void imService.updateConfig({ telegram: { ...tgOpenClawConfig, allowFrom: newIds } });
+                        }
+                      }}
+                      className="px-3 py-2 rounded-lg text-xs font-medium bg-claude-accent/10 text-claude-accent hover:bg-claude-accent/20 transition-colors"
+                    >
+                      {i18nService.t('add') || '添加'}
+                    </button>
+                  </div>
+                  {tgOpenClawConfig.allowFrom.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                      {tgOpenClawConfig.allowFrom.map((id) => (
+                        <span
+                          key={id}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border dark:text-claude-darkText text-claude-text"
+                        >
+                          {id}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newIds = tgOpenClawConfig.allowFrom.filter((uid) => uid !== id);
+                              handleTelegramOpenClawChange({ allowFrom: newIds });
+                              void imService.updateConfig({ telegram: { ...tgOpenClawConfig, allowFrom: newIds } });
+                            }}
+                            className="text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                          >
+                            <XMarkIcon className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Streaming Mode */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    Streaming
+                  </label>
+                  <select
+                    value={tgOpenClawConfig.streaming}
+                    onChange={(e) => {
+                      const update = { streaming: e.target.value as TelegramOpenClawConfig['streaming'] };
+                      handleTelegramOpenClawChange(update);
+                      void handleSaveTelegramOpenClawConfig(update);
+                    }}
+                    className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
+                  >
+                    <option value="off">Off</option>
+                    <option value="partial">Partial</option>
+                    <option value="block">Block</option>
+                    <option value="progress">Progress</option>
+                  </select>
+                </div>
+
+                {/* Proxy */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    Proxy
+                  </label>
+                  <input
+                    type="text"
+                    value={tgOpenClawConfig.proxy}
+                    onChange={(e) => handleTelegramOpenClawChange({ proxy: e.target.value })}
+                    onBlur={() => handleSaveTelegramOpenClawConfig()}
+                    className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
+                    placeholder="socks5://localhost:9050"
+                  />
+                </div>
+
                 {/* Group Policy */}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -868,8 +762,9 @@ const IMSettings: React.FC = () => {
                   <select
                     value={tgOpenClawConfig.groupPolicy}
                     onChange={(e) => {
-                      handleTelegramOpenClawChange({ groupPolicy: e.target.value as TelegramOpenClawConfig['groupPolicy'] });
-                      void handleSaveTelegramOpenClawConfig();
+                      const update = { groupPolicy: e.target.value as TelegramOpenClawConfig['groupPolicy'] };
+                      handleTelegramOpenClawChange(update);
+                      void handleSaveTelegramOpenClawConfig(update);
                     }}
                     className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
                   >
@@ -887,8 +782,9 @@ const IMSettings: React.FC = () => {
                   <select
                     value={tgOpenClawConfig.replyToMode}
                     onChange={(e) => {
-                      handleTelegramOpenClawChange({ replyToMode: e.target.value as TelegramOpenClawConfig['replyToMode'] });
-                      void handleSaveTelegramOpenClawConfig();
+                      const update = { replyToMode: e.target.value as TelegramOpenClawConfig['replyToMode'] };
+                      handleTelegramOpenClawChange(update);
+                      void handleSaveTelegramOpenClawConfig(update);
                     }}
                     className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
                   >
@@ -907,7 +803,7 @@ const IMSettings: React.FC = () => {
                     type="number"
                     value={tgOpenClawConfig.historyLimit}
                     onChange={(e) => handleTelegramOpenClawChange({ historyLimit: parseInt(e.target.value) || 50 })}
-                    onBlur={handleSaveTelegramOpenClawConfig}
+                    onBlur={() => handleSaveTelegramOpenClawConfig()}
                     className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
                     min="1"
                     max="200"
@@ -923,7 +819,7 @@ const IMSettings: React.FC = () => {
                     type="number"
                     value={tgOpenClawConfig.mediaMaxMb}
                     onChange={(e) => handleTelegramOpenClawChange({ mediaMaxMb: parseInt(e.target.value) || 5 })}
-                    onBlur={handleSaveTelegramOpenClawConfig}
+                    onBlur={() => handleSaveTelegramOpenClawConfig()}
                     className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
                     min="1"
                     max="50"
@@ -938,8 +834,9 @@ const IMSettings: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      handleTelegramOpenClawChange({ linkPreview: !tgOpenClawConfig.linkPreview });
-                      void handleSaveTelegramOpenClawConfig();
+                      const update = { linkPreview: !tgOpenClawConfig.linkPreview };
+                      handleTelegramOpenClawChange(update);
+                      void handleSaveTelegramOpenClawConfig(update);
                     }}
                     className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
                       tgOpenClawConfig.linkPreview ? 'bg-claude-accent' : 'dark:bg-claude-darkSurface bg-claude-surface'
@@ -960,7 +857,7 @@ const IMSettings: React.FC = () => {
                     type="text"
                     value={tgOpenClawConfig.webhookUrl}
                     onChange={(e) => handleTelegramOpenClawChange({ webhookUrl: e.target.value })}
-                    onBlur={handleSaveTelegramOpenClawConfig}
+                    onBlur={() => handleSaveTelegramOpenClawConfig()}
                     className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
                     placeholder="https://example.com/telegram-webhook"
                   />
@@ -976,7 +873,7 @@ const IMSettings: React.FC = () => {
                       type="password"
                       value={tgOpenClawConfig.webhookSecret}
                       onChange={(e) => handleTelegramOpenClawChange({ webhookSecret: e.target.value })}
-                      onBlur={handleSaveTelegramOpenClawConfig}
+                      onBlur={() => handleSaveTelegramOpenClawConfig()}
                       className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
                       placeholder="webhook-secret"
                     />
