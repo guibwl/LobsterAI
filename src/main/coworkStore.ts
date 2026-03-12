@@ -888,7 +888,7 @@ export class CoworkStore {
     const memoryUserMemoriesMaxItemsRow = this.getOne<ConfigRow>('SELECT value FROM cowork_config WHERE key = ?', ['memoryUserMemoriesMaxItems']);
 
     const normalizedExecutionMode =
-      executionModeRow?.value === 'container' ? 'sandbox' : (executionModeRow?.value as CoworkExecutionMode);
+      executionModeRow?.value === 'container' ? 'local' : (executionModeRow?.value as CoworkExecutionMode);
     const normalizedAgentEngine = normalizeCoworkAgentEngineValue(agentEngineRow?.value);
 
     return {
