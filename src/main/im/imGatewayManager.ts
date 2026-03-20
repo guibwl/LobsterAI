@@ -6,6 +6,7 @@
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
+import { t } from '../i18n';
 import { NimGateway } from './nimGateway';
 import { XiaomifengGateway } from './xiaomifengGateway';
 import { IMChatHandler } from './imChatHandler';
@@ -2111,6 +2112,90 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'wecom') return status.wecom.lastError;
     if (platform === 'popo') return status.popo.lastError;
     return status.discord.lastError;
+  }
+
+  // ==================== Feishu Bot Install Helpers ====================
+
+  /** Lazy-load and cache the feishu-auth module (avoid repeated dynamic import overhead). */
+  private _feishuAuthModule: any = null;
+  private async getFeishuAuthModule() {
+    if (!this._feishuAuthModule) {
+      this._feishuAuthModule = await import('@larksuite/openclaw-lark-tools/dist/utils/feishu-auth.js');
+    }
+    return this._feishuAuthModule;
+  }
+
+  /**
+   * Start the Feishu Device Flow onboarding: init + begin.
+   * Returns data needed to render a QR code in the UI.
+   * Also caches isLark so that pollFeishuInstall uses the correct domain.
+   */
+  private _feishuInstallIsLark = false;
+  async startFeishuInstallQrcode(isLark: boolean): Promise<{
+    url: string;
+    deviceCode: string;
+    interval: number;
+    expireIn: number;
+  }> {
+    const { FeishuAuth } = await this.getFeishuAuthModule();
+    this._feishuInstallIsLark = isLark;
+    const auth = new FeishuAuth();
+    auth.setDomain(isLark);
+    await auth.init();
+    const resp = await auth.begin();
+    return {
+      url: resp.verification_uri_complete,
+      deviceCode: resp.device_code,
+      interval: resp.interval ?? 5,
+      expireIn: resp.expire_in ?? 300,
+    };
+  }
+
+  /**
+   * Poll Feishu Device Flow for the result of a QR code scan.
+   * Uses the domain set during startFeishuInstallQrcode to ensure consistency.
+   */
+  async pollFeishuInstall(deviceCode: string): Promise<{
+    done: boolean;
+    appId?: string;
+    appSecret?: string;
+    domain?: string;
+    error?: string;
+  }> {
+    const { FeishuAuth } = await this.getFeishuAuthModule();
+    const auth = new FeishuAuth();
+    auth.setDomain(this._feishuInstallIsLark);
+    const resp = await auth.poll(deviceCode);
+    if (resp.error) {
+      if (resp.error === 'authorization_pending' || resp.error === 'slow_down') {
+        return { done: false };
+      }
+      return { done: false, error: resp.error_description || resp.error };
+    }
+    if (resp.client_id && resp.client_secret) {
+      const domain = resp.user_info?.tenant_brand === 'lark' ? 'lark' : 'feishu';
+      return { done: true, appId: resp.client_id, appSecret: resp.client_secret, domain };
+    }
+    return { done: false };
+  }
+
+  /**
+   * Validate existing Feishu app credentials (App ID + App Secret).
+   */
+  async verifyFeishuCredentials(appId: string, appSecret: string): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    const { validateAppCredentials } = await this.getFeishuAuthModule();
+    try {
+      const valid = await validateAppCredentials(appId, appSecret);
+      if (valid) {
+        return { success: true };
+      }
+      return { success: false, error: t('feishuVerifyCredentialsFailed') };
+    } catch (err: any) {
+      return { success: false, error: err?.message || t('feishuVerifyFailed') };
+    }
   }
 
   private calculateVerdict(checks: IMConnectivityCheck[]): IMConnectivityVerdict {

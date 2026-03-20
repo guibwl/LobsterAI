@@ -2993,6 +2993,31 @@ if (!gotTheLock) {
     }
   });
 
+  // Feishu bot install helpers
+  ipcMain.handle('feishu:install:qrcode', async (_event, { isLark }: { isLark: boolean }) => {
+    try {
+      return await getIMGatewayManager().startFeishuInstallQrcode(isLark);
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : '获取二维码失败');
+    }
+  });
+
+  ipcMain.handle('feishu:install:poll', async (_event, { deviceCode }: { deviceCode: string }) => {
+    try {
+      return await getIMGatewayManager().pollFeishuInstall(deviceCode);
+    } catch (error) {
+      return { done: false, error: error instanceof Error ? error.message : '轮询失败' };
+    }
+  });
+
+  ipcMain.handle('feishu:install:verify', async (_event, { appId, appSecret }: { appId: string; appSecret: string }) => {
+    try {
+      return await getIMGatewayManager().verifyFeishuCredentials(appId, appSecret);
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '验证失败' };
+    }
+  });
+
   ipcMain.handle('generate-session-title', async (_event, userInput: string | null) => {
     return generateSessionTitle(userInput);
   });
