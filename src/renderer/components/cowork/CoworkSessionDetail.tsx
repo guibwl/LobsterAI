@@ -13,6 +13,7 @@ import {
   ExclamationTriangleIcon,
   ChevronRightIcon,
   PhotoIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { coworkService } from '../../services/cowork';
@@ -589,6 +590,72 @@ export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[]
   }
 
   return turns;
+};
+
+const MAX_TOOL_RESULT_LENGTH = 500;
+
+export const buildSessionMarkdown = (title: string, messages: CoworkMessage[]): string => {
+  const items = buildDisplayItems(messages);
+  const turns = buildConversationTurns(items);
+  const parts: string[] = [`# ${title}`, ''];
+
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+
+    if (turn.userMessage) {
+      parts.push('## 🧑 User', '', turn.userMessage.content || '', '');
+    }
+
+    for (const item of turn.assistantItems) {
+      if (item.type === 'assistant') {
+        parts.push('## 🤖 Assistant', '', item.message.content || '', '');
+      } else if (item.type === 'system') {
+        parts.push('> **System**: ' + (item.message.content || ''), '');
+      } else if (item.type === 'tool_group') {
+        const toolName = item.group.toolUse.metadata?.toolName || 'tool';
+        const toolInput = item.group.toolUse.metadata?.toolInput;
+        const toolResult = item.group.toolResult?.content || item.group.toolResult?.metadata?.toolResult || '';
+        const truncatedResult = toolResult.length > MAX_TOOL_RESULT_LENGTH
+          ? toolResult.slice(0, MAX_TOOL_RESULT_LENGTH) + '\n... (truncated)'
+          : toolResult;
+        parts.push(
+          `<details>`,
+          `<summary>🔧 ${toolName}</summary>`,
+          '',
+        );
+        if (toolInput) {
+          parts.push(
+            '**Input:**',
+            '```json',
+            JSON.stringify(toolInput, null, 2),
+            '```',
+            '',
+          );
+        }
+        if (truncatedResult) {
+          parts.push(
+            '**Result:**',
+            '```',
+            truncatedResult,
+            '```',
+            '',
+          );
+        }
+        parts.push('</details>', '');
+      } else if (item.type === 'tool_result') {
+        const result = item.message.content || item.message.metadata?.toolResult || '';
+        if (result) {
+          parts.push('```', result.slice(0, MAX_TOOL_RESULT_LENGTH), '```', '');
+        }
+      }
+    }
+
+    if (i < turns.length - 1) {
+      parts.push('---', '');
+    }
+  }
+
+  return parts.join('\n');
 };
 
 const isRenderableAssistantOrSystemMessage = (message: CoworkMessage): boolean => {
@@ -1652,6 +1719,40 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     });
   };
 
+  const handleExportMarkdown = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!currentSession) return;
+    closeMenu();
+
+    if (!currentSession.messages || currentSession.messages.length === 0) {
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkExportMarkdownEmpty'),
+      }));
+      return;
+    }
+
+    const markdown = buildSessionMarkdown(currentSession.title, currentSession.messages);
+    const timestamp = formatExportTimestamp(new Date());
+    const sanitizedTitle = sanitizeExportFileName(currentSession.title);
+    const result = await coworkService.exportSessionMarkdown({
+      markdownContent: markdown,
+      defaultFileName: `${sanitizedTitle}-${timestamp}.md`,
+      defaultDir: currentSession.cwd || undefined,
+    });
+
+    if (result && !result.canceled) {
+      if (result.success) {
+        window.dispatchEvent(new CustomEvent('app:showToast', {
+          detail: i18nService.t('coworkExportMarkdownSuccess'),
+        }));
+      } else {
+        window.dispatchEvent(new CustomEvent('app:showToast', {
+          detail: i18nService.t('coworkExportMarkdownFailed'),
+        }));
+      }
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!currentSession) return;
     await coworkService.deleteSession(currentSession.id);
@@ -1976,6 +2077,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           >
             <ShareIcon className="h-4 w-4" />
             {i18nService.t('coworkShareSession')}
+          </button>
+          <button
+            type="button"
+            onClick={handleExportMarkdown}
+            className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          >
+            <ArrowDownTrayIcon className="h-4 w-4" />
+            {i18nService.t('coworkExportMarkdown')}
           </button>
           <button
             type="button"

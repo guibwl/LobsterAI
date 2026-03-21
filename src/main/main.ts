@@ -314,6 +314,31 @@ const savePngWithDialog = async (
   return { success: true, canceled: false, path: outputPath };
 };
 
+const saveTextWithDialog = async (
+  webContents: WebContents,
+  textContent: string,
+  defaultFileName: string,
+  defaultDir?: string,
+): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> => {
+  const baseDir = defaultDir || app.getPath('downloads');
+  const ownerWindow = BrowserWindow.fromWebContents(webContents);
+  const saveOptions = {
+    title: 'Export Markdown',
+    defaultPath: path.join(baseDir, defaultFileName),
+    filters: [{ name: 'Markdown', extensions: ['md'] }],
+  };
+  const saveResult = ownerWindow
+    ? await dialog.showSaveDialog(ownerWindow, saveOptions)
+    : await dialog.showSaveDialog(saveOptions);
+
+  if (saveResult.canceled || !saveResult.filePath) {
+    return { success: true, canceled: true };
+  }
+
+  await fs.promises.writeFile(saveResult.filePath, textContent, 'utf-8');
+  return { success: true, canceled: false, path: saveResult.filePath };
+};
+
 const configureUserDataPath = (): void => {
   const appDataPath = app.getPath('appData');
   const preferredUserDataPath = path.join(appDataPath, APP_NAME);
@@ -2331,6 +2356,31 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to save session image',
+      };
+    }
+  });
+
+  ipcMain.handle('cowork:session:exportMarkdown', async (
+    event,
+    options: {
+      markdownContent: string;
+      defaultFileName: string;
+      defaultDir?: string;
+    }
+  ) => {
+    try {
+      const content = typeof options?.markdownContent === 'string' ? options.markdownContent : '';
+      if (!content) {
+        return { success: false, error: 'Markdown content is required' };
+      }
+      const fileName = typeof options?.defaultFileName === 'string' && options.defaultFileName.trim()
+        ? options.defaultFileName.trim()
+        : 'session-export.md';
+      return saveTextWithDialog(event.sender, content, fileName, options?.defaultDir);
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to export markdown',
       };
     }
   });
