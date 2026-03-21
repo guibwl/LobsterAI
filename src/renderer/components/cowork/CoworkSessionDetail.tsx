@@ -736,7 +736,9 @@ const ToolCallGroup: React.FC<{
                   : 'dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60'
             }`}>
               {hasToolResultText
-                ? (toolResultSummary ?? `${resultLineCount} ${resultLineCount === 1 ? 'line' : 'lines'} of output`)
+                ? (toolResultSummary ?? (resultLineCount === 1
+                    ? i18nService.t('coworkToolOutputLinesOne')
+                    : i18nService.t('coworkToolOutputLines').replace('{n}', String(resultLineCount))))
                 : toolResultFallback}
             </div>
           )}
@@ -1174,7 +1176,9 @@ export const AssistantTurnBlock: React.FC<{
             </div>
             {resultLineCount > 0 && (
               <div className="text-xs dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60 mt-0.5">
-                {resultLineCount} {resultLineCount === 1 ? 'line' : 'lines'} of output
+                {resultLineCount === 1
+                  ? i18nService.t('coworkToolOutputLinesOne')
+                  : i18nService.t('coworkToolOutputLines').replace('{n}', String(resultLineCount))}
               </div>
             )}
             {resultLineCount === 0 && showNoDetailError && (
