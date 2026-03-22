@@ -592,7 +592,6 @@ export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[]
   return turns;
 };
 
-const MAX_TOOL_RESULT_LENGTH = 500;
 
 export const buildSessionMarkdown = (title: string, messages: CoworkMessage[]): string => {
   const items = buildDisplayItems(messages);
@@ -615,9 +614,6 @@ export const buildSessionMarkdown = (title: string, messages: CoworkMessage[]): 
         const toolName = item.group.toolUse.metadata?.toolName || 'tool';
         const toolInput = item.group.toolUse.metadata?.toolInput;
         const toolResult = item.group.toolResult?.content || item.group.toolResult?.metadata?.toolResult || '';
-        const truncatedResult = toolResult.length > MAX_TOOL_RESULT_LENGTH
-          ? toolResult.slice(0, MAX_TOOL_RESULT_LENGTH) + '\n... (truncated)'
-          : toolResult;
         parts.push(
           `<details>`,
           `<summary>🔧 ${toolName}</summary>`,
@@ -632,11 +628,11 @@ export const buildSessionMarkdown = (title: string, messages: CoworkMessage[]): 
             '',
           );
         }
-        if (truncatedResult) {
+        if (toolResult) {
           parts.push(
             '**Result:**',
             '```',
-            truncatedResult,
+            toolResult,
             '```',
             '',
           );
